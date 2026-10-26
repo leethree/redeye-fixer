@@ -40,3 +40,7 @@ high green and blue values, so they survive. The mask edge is softened so there 
 - There is no automatic eye detection.
 - Made for red and orange eyes in people, not the yellow or green eye-shine of pets.
 - Marks are not kept if you close or reload the page.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
