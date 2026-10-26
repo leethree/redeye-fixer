@@ -1,0 +1,10 @@
+# keep photos out of the repository
+*.jpg
+*.jpeg
+*.JPG
+*.JPEG
+*.png
+*.PNG
+*.heic
+*.HEIC
+.DS_Store

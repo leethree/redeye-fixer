@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Red-eye Fixer</title>
+<style>
+  :root {
+    --bg: #f4f3f1;
+    --surface: #ffffff;
+    --text: #1d1c1a;
+    --muted: #6b6862;
+    --border: #d9d6d0;
+    --accent: #c2410c;
+    --accent-text: #ffffff;
+    --stage: #e7e5e1;
+    --mark: #ffffff;
+    --mark-outline: rgba(0, 0, 0, 0.6);
+    --mark-selected: #f97316;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161514;
+      --surface: #201f1d;
+      --text: #ecebe8;
+      --muted: #a19e97;
+      --border: #3a3835;
+      --accent: #f97316;
+      --accent-text: #1d1c1a;
+      --stage: #0e0d0c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161514;
+    --surface: #201f1d;
+    --text: #ecebe8;
+    --muted: #a19e97;
+    --border: #3a3835;
+    --accent: #f97316;
+    --accent-text: #1d1c1a;
+    --stage: #0e0d0c;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+  .bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .bar .spacer { flex: 1; }
+  button, .btn {
+    font: inherit;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    touch-action: manipulation;
+  }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.primary, .btn.primary {
+    background: var(--accent);
+    color: var(--accent-text);
+    border-color: var(--accent);
+  }
+  button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  #status { color: var(--muted); font-size: 13px; }
+  #stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    background: var(--stage);
+    overflow: hidden;
+  }
+  #view {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+    cursor: crosshair;
+  }
+  #stage.dragover { outline: 3px dashed var(--accent); outline-offset: -8px; }
+  #empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 16px;
+    text-align: center;
+    color: var(--muted);
+    pointer-events: none;
+  }
+  #empty[hidden] { display: none; }
+  #empty h1 { margin: 0; font-size: 20px; color: var(--text); font-weight: 600; }
+  #empty p { margin: 0; max-width: 34em; }
+  #empty dl {
+    margin: 8px 0 0;
+    max-width: 34em;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 12px;
+    text-align: left;
+    font-size: 13px;
+  }
+  #empty dt { font-weight: 600; color: var(--text); }
+  #empty dd { margin: 0; }
+  @media (max-width: 600px) {
+    #empty { justify-content: flex-start; overflow-y: auto; pointer-events: auto; }
+    #empty dl { grid-template-columns: 1fr; gap: 2px; }
+    #empty dd { margin-bottom: 6px; }
+  }
+  #panel {
+    position: absolute;
+    left: 16px;
+    bottom: 16px;
+    width: 300px;
+    max-width: calc(100% - 32px);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  }
+  #panel[hidden] { display: none; }
+  #panel .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  #panel label { display: flex; flex-direction: column; gap: 4px; }
+  #panel .hint { color: var(--muted); font-size: 12px; }
+  #panel input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .seg { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .seg button { flex: 1; border: 0; border-radius: 0; padding: 6px 8px; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+  .help {
+    padding: 6px 16px;
+    color: var(--muted);
+    font-size: 12px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+  }
+  @media (max-width: 600px) {
+    #panel { left: 8px; right: 8px; bottom: 8px; width: auto; max-width: none; }
+    .bar { padding: 8px; }
+    .help .desktop { display: none; }
+  }
+  @media (min-width: 601px) {
+    .help .touch { display: none; }
+  }
+</style>
+</head>
+<body>
+<header class="bar">
+  <label class="btn primary">Open photo<input id="file" type="file" accept="image/*" hidden></label>
+  <button id="save" disabled>Save</button>
+  <button id="undo" disabled>Undo</button>
+  <button id="fit" disabled>Fit</button>
+  <button id="compare" disabled title="Hold to show the original (or hold Space)">Hold to compare</button>
+  <button id="marks" disabled aria-pressed="true">Marks</button>
+  <span class="spacer"></span>
+  <span id="status"></span>
+</header>
+
+<main id="stage">
+  <canvas id="view"></canvas>
+  <div id="empty">
+    <h1>Red-eye Fixer</h1>
+    <p>Open a photo or drop it here, then click or tap each red eye.</p>
+    <p>Your photo stays on this device. Nothing is uploaded.</p>
+    <dl>
+      <dt>Opens</dt>
+      <dd>JPEG and PNG. WebP, GIF and BMP work in most browsers. HEIC (iPhone) only in Safari.</dd>
+      <dt>Saves</dt>
+      <dd>JPEG photos as JPEG (quality 97) with their camera and scanner details kept. Other formats as PNG, without those details.</dd>
+      <dt>Limits</dt>
+      <dd>You mark each eye yourself; there is no automatic detection.
+        Made for red and orange eyes in people, not the yellow or green eye-shine of pets.
+        Colours are saved as standard sRGB, so wide-colour photos from recent phones lose a little vividness.
+        Very large photos may not open on phones.
+        Marks are not kept if you close or reload the page.</dd>
+    </dl>
+  </div>
+  <section id="panel" hidden>
+    <div class="row">
+      <strong id="panel-title">Eye</strong>
+      <button id="delete">Remove</button>
+    </div>
+    <label>
+      <span class="row"><span>Size</span><span id="size-val"></span></span>
+      <input id="size" type="range" min="2" max="40" step="1">
+    </label>
+    <label>
+      <span class="row"><span>Red threshold</span><span id="thr-val"></span></span>
+      <input id="thr" type="range" min="0" max="40" step="1">
+      <span class="hint">Lower catches fainter red. Raise it if skin around the eye changes.</span>
+    </label>
+    <div>
+      <div class="seg" role="group" aria-label="Compare the pupil with">
+        <button id="mode-skin" aria-pressed="true">Compare with skin</button>
+        <button id="mode-iris" aria-pressed="false">Compare with iris</button>
+      </div>
+      <span class="hint">Use "iris" when the skin is as warm as the red glow.</span>
+    </div>
+  </section>
+</main>
+
+<div class="help">
+  <span class="desktop">Click an eye to fix it. Drag a mark to move it. Drag elsewhere to pan, scroll to zoom. Right-click or Delete removes a mark; [ and ] resize; Space compares; Ctrl/Cmd+Z undoes.</span>
+  <span class="touch">Tap an eye to fix it. Drag a mark to move it. Drag elsewhere to pan, pinch to zoom.</span>
+</div>
+
+<script>
+// CORE START
+// Red-eye correction for one marked eye. Mirrors redeye.py (warm min(G, B)):
+// find pixels in a small circle that are clearly redder than the nearby skin
+// (or, in "iris" mode, lighter and more orange than the eye's own iris), then
+// replace them with min(G, B) in all channels plus a slight tint taken from the
+// darkest nearby pixels, so the pupil matches the scan instead of reading blue.
+const LUMA = [0.299, 0.587, 0.114];
+const RAMP = 25;     // redness range over which the mask goes from 0 to full strength
+const WARMTH = 0.4;  // share of the scan's own dark-tone colour kept in the pupil
+
+const clip01 = v => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+// linear-interpolated percentile, same as numpy's default
+function percentile(values, p) {
+  const a = Float64Array.from(values).sort();
+  if (!a.length) return 0;
+  const idx = (a.length - 1) * p / 100;
+  const lo = Math.floor(idx), hi = Math.ceil(idx);
+  return a[lo] + (a[hi] - a[lo]) * (idx - lo);
+}
+
+// 3x3 mean with edge padding on an n x n grid
+function boxBlur(m, n) {
+  const out = new Float64Array(n * n);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      let s = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = Math.min(n - 1, Math.max(0, y + dy));
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = Math.min(n - 1, Math.max(0, x + dx));
+          s += m[yy * n + xx];
+        }
+      }
+      out[y * n + x] = s / 9;
+    }
+  }
+  return out;
+}
+
+function eyePad(r) { return Math.max(r * 3, 18); }
+
+// src, dst: RGBA Uint8ClampedArray of a w x h image. Reads only src, writes dst
+// only where the mask is non-zero, so eyes can be applied in any order.
+function fixEye(src, dst, w, h, eye) {
+  const { x: cx, y: cy, r: rad, mode, margin } = eye;
+  const pad = eyePad(rad);
+  const n = 2 * pad + 1, N = n * n;
+  const R = new Float64Array(N), G = new Float64Array(N), B = new Float64Array(N);
+  const dist = new Float64Array(N), red = new Float64Array(N);
+  const minGB = new Float64Array(N), lum = new Float64Array(N);
+  for (let j = 0; j < n; j++) {
+    const py = Math.min(h - 1, Math.max(0, cy - pad + j));
+    for (let i = 0; i < n; i++) {
+      const px = Math.min(w - 1, Math.max(0, cx - pad + i));
+      const k = (py * w + px) * 4, c = j * n + i;
+      R[c] = src[k]; G[c] = src[k + 1]; B[c] = src[k + 2];
+      dist[c] = Math.hypot(i - pad, j - pad);
+      red[c] = R[c] - (G[c] + B[c]) / 2;
+      minGB[c] = Math.min(G[c], B[c]);
+      lum[c] = R[c] * LUMA[0] + G[c] * LUMA[1] + B[c] * LUMA[2];
+    }
+  }
+
+  let mask = new Float64Array(N);
+  if (mode === "iris") {
+    const ring = [];
+    for (let c = 0; c < N; c++) if (dist[c] > rad && dist[c] < rad + 4) ring.push(lum[c]);
+    const iris = percentile(ring, 20);
+    for (let c = 0; c < N; c++) {
+      mask[c] = clip01((lum[c] - iris - 10) / 20) * clip01((R[c] - B[c] - 50) / 20);
+    }
+  } else {
+    // sample skin far enough out to clear the iris and eyelid, even for small pupils
+    const lo = Math.max(rad * 1.6, 10), hi = Math.max(rad * 2.8, 16);
+    const skin = [];
+    for (let c = 0; c < N; c++) if (dist[c] > lo && dist[c] < hi) skin.push(red[c]);
+    const base = percentile(skin, 50);
+    for (let c = 0; c < N; c++) {
+      const m = clip01((red[c] - base - margin) / RAMP);
+      // the overexposed centre of a glow is near-white orange and scores low on
+      // redness; near the centre, treat bright warm pixels as glow too
+      const glow = clip01((minGB[c] - 100) / 30) * clip01((red[c] - base) / 15) * clip01(3.5 - dist[c]);
+      mask[c] = Math.max(m, glow);
+    }
+  }
+  // fade the circle's edge, fill small grain gaps, then soften the edge
+  for (let c = 0; c < N; c++) mask[c] *= clip01(rad + 1 - dist[c]);
+  const filled = boxBlur(mask, n);
+  for (let c = 0; c < N; c++) {
+    mask[c] = Math.max(mask[c], clip01(filled[c] * 1.6)) * clip01(rad + 1 - dist[c]);
+  }
+  mask = boxBlur(mask, n);
+
+  // tint from the darkest 5% of pixels just outside the pupil
+  const near = [];
+  for (let c = 0; c < N; c++) if (dist[c] > rad && dist[c] < rad * 2.5) near.push(c);
+  const thr = percentile(near.map(c => lum[c]), 5);
+  let sr = 0, sg = 0, sb = 0, cnt = 0;
+  for (const c of near) if (lum[c] <= thr) { sr += R[c]; sg += G[c]; sb += B[c]; cnt++; }
+  const ref = [sr / cnt, sg / cnt, sb / cnt];
+  const refL = ref[0] * LUMA[0] + ref[1] * LUMA[1] + ref[2] * LUMA[2];
+  const tint = ref.map(v => 1 + WARMTH * (v / refL - 1));
+
+  for (let j = 0; j < n; j++) {
+    const py = cy - pad + j;
+    if (py < 0 || py >= h) continue;
+    for (let i = 0; i < n; i++) {
+      const px = cx - pad + i;
+      if (px < 0 || px >= w) continue;
+      const c = j * n + i, m = mask[c];
+      if (m <= 0) continue;
+      const k = (py * w + px) * 4;
+      // Uint8ClampedArray clamps and rounds half to even, like numpy's round
+      dst[k] = R[c] * (1 - m) + minGB[c] * tint[0] * m;
+      dst[k + 1] = G[c] * (1 - m) + minGB[c] * tint[1] * m;
+      dst[k + 2] = B[c] * (1 - m) + minGB[c] * tint[2] * m;
+    }
+  }
+}
+
+// Move a click to the reddest nearby point (3x3 mean redness within +-search px).
+// Returns the click unchanged when nothing there is clearly redder than the skin.
+function snapToRed(src, w, h, x, y, search) {
+  const redAt = (px, py) => {
+    px = Math.min(w - 1, Math.max(0, px)); py = Math.min(h - 1, Math.max(0, py));
+    const k = (py * w + px) * 4;
+    return src[k] - (src[k + 1] + src[k + 2]) / 2;
+  };
+  let best = -Infinity, bx = x, by = y;
+  for (let dy = -search; dy <= search; dy++) {
+    for (let dx = -search; dx <= search; dx++) {
+      let s = 0;
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) s += redAt(x + dx + b, y + dy + a);
+      if (s / 9 > best) { best = s / 9; bx = x + dx; by = y + dy; }
+    }
+  }
+  const skin = [];
+  for (let dy = -16; dy <= 16; dy++) {
+    for (let dx = -16; dx <= 16; dx++) {
+      const d = Math.hypot(dx, dy);
+      if (d > 10 && d < 16) skin.push(redAt(bx + dx, by + dy));
+    }
+  }
+  return best - percentile(skin, 50) >= 15 ? { x: bx, y: by } : { x, y };
+}
+// CORE END
+
+(() => {
+  const $ = id => document.getElementById(id);
+  const stage = $("stage"), view = $("view"), ctx = view.getContext("2d");
+  const fileInput = $("file"), saveBtn = $("save"), undoBtn = $("undo"), fitBtn = $("fit");
+  const compareBtn = $("compare"), marksBtn = $("marks"), statusEl = $("status"), emptyEl = $("empty");
+  const panel = $("panel"), sizeIn = $("size"), thrIn = $("thr"), deleteBtn = $("delete");
+  const modeSkin = $("mode-skin"), modeIris = $("mode-iris");
+
+  let W = 0, H = 0, src = null, outData = null;
+  let origCanvas = null, outCanvas = null, outCtx = null;
+  let fileName = "", fileType = "", exifSegment = null;
+  let eyes = [], selected = -1, lastRegions = [];
+  let undoStack = [], lastEditKey = null;
+  let scale = 1, ox = 0, oy = 0, fitScale = 1;
+  let comparing = false, showMarks = true, renderQueued = false, dirty = false;
+
+  const DEFAULT_MARGIN = 20;
+  const defaultRadius = () => Math.min(30, Math.max(3, Math.round(Math.min(W, H) / 350)));
+
+  // ---------- loading ----------
+  async function loadFile(file) {
+    if (!file) return;
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(file);
+    } catch {
+      alert("This browser can't open that file. Try a JPEG or PNG.");
+      return;
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    W = bitmap.width; H = bitmap.height;
+    origCanvas = document.createElement("canvas");
+    origCanvas.width = W; origCanvas.height = H;
+    const octx = origCanvas.getContext("2d", { willReadFrequently: true });
+    octx.drawImage(bitmap, 0, 0);
+    bitmap.close && bitmap.close();
+    const imgData = octx.getImageData(0, 0, W, H);
+    src = imgData.data;
+    outCanvas = document.createElement("canvas");
+    outCanvas.width = W; outCanvas.height = H;
+    outCtx = outCanvas.getContext("2d");
+    outData = new ImageData(new Uint8ClampedArray(src), W, H);
+    outCtx.putImageData(outData, 0, 0);
+
+    fileName = file.name.replace(/\.[^.]+$/, "") || "photo";
+    fileType = isJpeg(bytes) ? "image/jpeg" : "image/png";
+    exifSegment = fileType === "image/jpeg" ? findExif(bytes) : null;
+    eyes = []; selected = -1; lastRegions = []; undoStack = []; lastEditKey = null;
+    emptyEl.hidden = true;
+    for (const b of [saveBtn, fitBtn, compareBtn, marksBtn]) b.disabled = false;
+    fit();
+    sync();
+  }
+
+  fileInput.addEventListener("change", () => { loadFile(fileInput.files[0]); fileInput.value = ""; });
+  stage.addEventListener("dragover", e => { e.preventDefault(); stage.classList.add("dragover"); });
+  stage.addEventListener("dragleave", () => stage.classList.remove("dragover"));
+  stage.addEventListener("drop", e => {
+    e.preventDefault();
+    stage.classList.remove("dragover");
+    const f = [...e.dataTransfer.files].find(f => f.type.startsWith("image/")) || e.dataTransfer.files[0];
+    loadFile(f);
+  });
+
+  // ---------- processing ----------
+  function regionOf(eye) {
+    const p = eyePad(eye.r);
+    return { x: eye.x - p, y: eye.y - p, w: 2 * p + 1, h: 2 * p + 1 };
+  }
+
+  function applyEyes() {
+    const d = outData.data;
+    const regions = eyes.map(regionOf);
+    // restore everything the previous pass touched, then apply all eyes again
+    for (const g of lastRegions) {
+      for (let y = Math.max(0, g.y); y < Math.min(H, g.y + g.h); y++) {
+        const a = (y * W + Math.max(0, g.x)) * 4, b = (y * W + Math.min(W, g.x + g.w)) * 4;
+        d.set(src.subarray(a, b), a);
+      }
+    }
+    for (const eye of eyes) fixEye(src, d, W, H, eye);
+    const all = lastRegions.concat(regions);
+    if (all.length) {
+      const x0 = Math.max(0, Math.min(...all.map(g => g.x)));
+      const y0 = Math.max(0, Math.min(...all.map(g => g.y)));
+      const x1 = Math.min(W, Math.max(...all.map(g => g.x + g.w)));
+      const y1 = Math.min(H, Math.max(...all.map(g => g.y + g.h)));
+      if (x1 > x0 && y1 > y0) outCtx.putImageData(outData, 0, 0, x0, y0, x1 - x0, y1 - y0);
+    }
+    lastRegions = regions;
+  }
+
+  // ---------- state changes ----------
+  function snapshot() { return JSON.stringify({ eyes, selected }); }
+
+  // one undo step per continuous edit (e.g. a whole slider drag)
+  function beginEdit(key) {
+    if (key && key === lastEditKey) return;
+    undoStack.push(snapshot());
+    if (undoStack.length > 200) undoStack.shift();
+    lastEditKey = key;
+  }
+
+  function undo() {
+    if (!undoStack.length) return;
+    const s = JSON.parse(undoStack.pop());
+    eyes = s.eyes; selected = s.selected; lastEditKey = null;
+    sync();
+  }
+
+  function addEye(ix, iy) {
+    const x = Math.round(ix), y = Math.round(iy);
+    if (x < 0 || y < 0 || x >= W || y >= H) return;
+    beginEdit(null);
+    const p = snapToRed(src, W, H, x, y, 9);
+    // keep the raw click: snapping to redness is wrong for "iris" mode, where
+    // the skin or clothing nearby can be redder than the pupil
+    eyes.push({ x: p.x, y: p.y, r: defaultRadius(), mode: "skin", margin: DEFAULT_MARGIN, click: { x, y } });
+    selected = eyes.length - 1;
+    sync();
+  }
+
+  function removeEye(i) {
+    if (i < 0 || i >= eyes.length) return;
+    beginEdit(null);
+    eyes.splice(i, 1);
+    selected = -1;
+    sync();
+  }
+
+  function select(i) {
+    selected = i;
+    lastEditKey = null;
+    sync(false);
+  }
+
+  function sync(changed = true) {
+    if (changed) { applyEyes(); dirty = true; }
+    undoBtn.disabled = !undoStack.length;
+    statusEl.textContent = W ? `${W} × ${H} · ${eyes.length} eye${eyes.length === 1 ? "" : "s"}` : "";
+    const eye = eyes[selected];
+    panel.hidden = !eye;
+    if (eye) {
+      $("panel-title").textContent = `Eye ${selected + 1} of ${eyes.length}`;
+      sizeIn.value = eye.r; $("size-val").textContent = `${eye.r} px`;
+      thrIn.value = eye.margin; $("thr-val").textContent = eye.margin;
+      thrIn.disabled = eye.mode === "iris";
+      modeSkin.setAttribute("aria-pressed", eye.mode !== "iris");
+      modeIris.setAttribute("aria-pressed", eye.mode === "iris");
+    }
+    requestRender();
+  }
+
+  sizeIn.addEventListener("input", () => {
+    const eye = eyes[selected]; if (!eye) return;
+    beginEdit(`size${selected}`);
+    eye.r = +sizeIn.value;
+    sync();
+  });
+  thrIn.addEventListener("input", () => {
+    const eye = eyes[selected]; if (!eye) return;
+    beginEdit(`thr${selected}`);
+    eye.margin = +thrIn.value;
+    sync();
+  });
+  for (const [btn, mode] of [[modeSkin, "skin"], [modeIris, "iris"]]) {
+    btn.addEventListener("click", () => {
+      const eye = eyes[selected]; if (!eye || eye.mode === mode) return;
+      beginEdit(null);
+      eye.mode = mode;
+      if (eye.click) {
+        const p = mode === "iris" ? eye.click : snapToRed(src, W, H, eye.click.x, eye.click.y, 9);
+        eye.x = p.x; eye.y = p.y;
+      }
+      sync();
+    });
+  }
+  deleteBtn.addEventListener("click", () => removeEye(selected));
+  undoBtn.addEventListener("click", undo);
+  fitBtn.addEventListener("click", fit);
+  marksBtn.addEventListener("click", () => {
+    showMarks = !showMarks;
+    marksBtn.setAttribute("aria-pressed", showMarks);
+    requestRender();
+  });
+  const setCompare = on => { if (comparing !== on) { comparing = on; requestRender(); } };
+  compareBtn.addEventListener("pointerdown", e => { e.preventDefault(); setCompare(true); });
+  for (const t of ["pointerup", "pointerleave", "pointercancel"]) compareBtn.addEventListener(t, () => setCompare(false));
+  compareBtn.addEventListener("contextmenu", e => e.preventDefault());
+
+  // ---------- view ----------
+  function resizeCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    view.width = Math.round(view.clientWidth * dpr);
+    view.height = Math.round(view.clientHeight * dpr);
+    requestRender();
+  }
+  new ResizeObserver(resizeCanvas).observe(stage);
+
+  function fit() {
+    if (!W) return;
+    const cw = view.clientWidth, ch = view.clientHeight;
+    fitScale = Math.min(cw / W, ch / H) * 0.96;
+    scale = fitScale;
+    ox = (cw - W * scale) / 2;
+    oy = (ch - H * scale) / 2;
+    requestRender();
+  }
+
+  function zoomAt(sx, sy, factor) {
+    const next = Math.min(40, Math.max(fitScale * 0.5, scale * factor));
+    ox = sx - (sx - ox) * (next / scale);
+    oy = sy - (sy - oy) * (next / scale);
+    scale = next;
+    requestRender();
+  }
+
+  function requestRender() {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(render);
+  }
+
+  function render() {
+    renderQueued = false;
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, view.width, view.height);
+    if (!W) return;
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
+    ctx.imageSmoothingEnabled = scale * dpr < 2;
+    ctx.drawImage(comparing ? origCanvas : outCanvas, 0, 0);
+    if (!showMarks || comparing) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    eyes.forEach((eye, i) => {
+      const sx = ox + (eye.x + 0.5) * scale, sy = oy + (eye.y + 0.5) * scale;
+      const rr = Math.max((eye.r + 1.5) * scale, 5);
+      ctx.beginPath();
+      ctx.arc(sx, sy, rr, 0, Math.PI * 2);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--mark-outline");
+      ctx.stroke();
+      ctx.lineWidth = i === selected ? 2 : 1.25;
+      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue(i === selected ? "--mark-selected" : "--mark");
+      ctx.stroke();
+    });
+  }
+
+  // ---------- pointer input (mouse, pen and touch) ----------
+  const toImage = (sx, sy) => ({ x: (sx - ox) / scale, y: (sy - oy) / scale });
+  const local = e => { const r = view.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+
+  function hitEye(sx, sy) {
+    const p = toImage(sx, sy);
+    let best = -1, bestD = Infinity;
+    eyes.forEach((eye, i) => {
+      const d = Math.hypot(p.x - (eye.x + 0.5), p.y - (eye.y + 0.5));
+      if (d <= Math.max(eye.r + 2, 12 / scale) && d < bestD) { best = i; bestD = d; }
+    });
+    return best;
+  }
+
+  const pointers = new Map();
+  let gesture = null;
+
+  view.addEventListener("pointerdown", e => {
+    if (!W || (e.pointerType === "mouse" && e.button !== 0)) return;
+    view.setPointerCapture(e.pointerId);
+    const p = local(e);
+    pointers.set(e.pointerId, p);
+    if (pointers.size === 1) {
+      const hit = hitEye(p.x, p.y);
+      gesture = {
+        type: hit >= 0 ? "move" : "pan", hit, start: p, moved: false,
+        ox, oy, eye: hit >= 0 ? { ...eyes[hit] } : null,
+      };
+    } else if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      gesture = {
+        type: "pinch", moved: true, scale, ox, oy,
+        dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+        mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      };
+    }
+  });
+
+  view.addEventListener("pointermove", e => {
+    if (!pointers.has(e.pointerId) || !gesture) return;
+    const p = local(e);
+    pointers.set(e.pointerId, p);
+    if (gesture.type === "pinch" && pointers.size >= 2) {
+      const [a, b] = [...pointers.values()];
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const next = Math.min(40, Math.max(fitScale * 0.5, gesture.scale * Math.hypot(a.x - b.x, a.y - b.y) / gesture.dist));
+      // keep the image point that was under the starting midpoint under the current midpoint
+      const ix = (gesture.mid.x - gesture.ox) / gesture.scale, iy = (gesture.mid.y - gesture.oy) / gesture.scale;
+      scale = next; ox = mid.x - ix * next; oy = mid.y - iy * next;
+      requestRender();
+      return;
+    }
+    const dx = p.x - gesture.start.x, dy = p.y - gesture.start.y;
+    if (!gesture.moved && Math.hypot(dx, dy) < (e.pointerType === "mouse" ? 4 : 8)) return;
+    if (!gesture.moved && gesture.type === "move") { beginEdit(null); select(gesture.hit); }
+    gesture.moved = true;
+    if (gesture.type === "pan") {
+      ox = gesture.ox + dx; oy = gesture.oy + dy;
+      requestRender();
+    } else if (gesture.type === "move") {
+      const eye = eyes[gesture.hit];
+      eye.x = Math.min(W - 1, Math.max(0, Math.round(gesture.eye.x + dx / scale)));
+      eye.y = Math.min(H - 1, Math.max(0, Math.round(gesture.eye.y + dy / scale)));
+      delete eye.click;  // placed by hand now; mode switches leave it where it is
+      sync();
+    }
+  });
+
+  function endPointer(e, cancelled) {
+    if (!pointers.has(e.pointerId)) return;
+    const p = pointers.get(e.pointerId);
+    pointers.delete(e.pointerId);
+    if (!gesture) return;
+    if (gesture.type === "pinch") {
+      if (pointers.size === 0) gesture = null;
+      return;
+    }
+    if (!cancelled && !gesture.moved) {
+      if (gesture.hit >= 0) select(gesture.hit);
+      else { const ip = toImage(p.x, p.y); addEye(ip.x, ip.y); }
+    }
+    gesture = null;
+  }
+  view.addEventListener("pointerup", e => endPointer(e, false));
+  view.addEventListener("pointercancel", e => endPointer(e, true));
+
+  view.addEventListener("contextmenu", e => {
+    e.preventDefault();
+    if (!W) return;
+    const p = local(e);
+    removeEye(hitEye(p.x, p.y));
+  });
+
+  view.addEventListener("wheel", e => {
+    if (!W) return;
+    e.preventDefault();
+    const p = local(e);
+    // trackpad pinch arrives as ctrl+wheel; a mouse wheel moves in large whole steps
+    const mouseWheel = e.deltaMode === 1 || (e.deltaX === 0 && Math.abs(e.deltaY) >= 50 && Number.isInteger(e.deltaY));
+    if (e.ctrlKey || mouseWheel) {
+      const step = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+      zoomAt(p.x, p.y, Math.exp(-step * (e.ctrlKey ? 0.01 : 0.0015)));
+    } else {
+      ox -= e.deltaX; oy -= e.deltaY;
+      requestRender();
+    }
+  }, { passive: false });
+
+  // ---------- keyboard ----------
+  window.addEventListener("keydown", e => {
+    if (!W) return;
+    const typing = e.target instanceof HTMLInputElement;
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
+    if (e.code === "Space" && !typing) { e.preventDefault(); setCompare(true); return; }
+    if (typing) return;
+    const eye = eyes[selected];
+    if ((e.key === "Delete" || e.key === "Backspace") && eye) { e.preventDefault(); removeEye(selected); }
+    else if ((e.key === "[" || e.key === "]") && eye) {
+      beginEdit(`size${selected}`);
+      eye.r = Math.min(40, Math.max(2, eye.r + (e.key === "]" ? 1 : -1)));
+      sync();
+    } else if (e.key === "Escape") select(-1);
+    else if (e.key === "0" || e.key.toLowerCase() === "f") fit();
+  });
+  window.addEventListener("keyup", e => { if (e.code === "Space") setCompare(false); });
+  window.addEventListener("blur", () => setCompare(false));
+  window.addEventListener("beforeunload", e => { if (dirty && eyes.length) e.preventDefault(); });
+
+  // ---------- saving ----------
+  saveBtn.addEventListener("click", () => {
+    if (!W) return;
+    outCanvas.toBlob(async blob => {
+      let bytes = new Uint8Array(await blob.arrayBuffer());
+      if (fileType === "image/jpeg" && exifSegment) bytes = insertExif(bytes, exifSegment);
+      const url = URL.createObjectURL(new Blob([bytes], { type: fileType }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${fileName}_fixed.${fileType === "image/jpeg" ? "jpg" : "png"}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      dirty = false;
+    }, fileType, 0.97);
+  });
+
+  function isJpeg(b) { return b[0] === 0xff && b[1] === 0xd8; }
+
+  // the APP1 "Exif" segment of a JPEG, including its marker, or null
+  function findExif(b) {
+    let i = 2;
+    while (i + 4 <= b.length && b[i] === 0xff) {
+      const marker = b[i + 1];
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { i += 2; continue; }
+      if (marker === 0xda || marker === 0xd9) break;
+      const len = (b[i + 2] << 8) | b[i + 3];
+      if (marker === 0xe1 && String.fromCharCode(...b.subarray(i + 4, i + 10)) === "Exif\0\0") {
+        return fixExif(b.slice(i, i + 2 + len));
+      }
+      i += 2 + len;
+    }
+    return null;
+  }
+
+  // The browser already applied any rotation when it decoded the photo, so set
+  // the orientation tag to 1 (upright), and drop the link to the embedded
+  // thumbnail, which would still show the red eyes.
+  function fixExif(seg) {
+    try {
+      const t = 10, dv = new DataView(seg.buffer, seg.byteOffset, seg.byteLength);
+      const le = dv.getUint16(t) === 0x4949;
+      const ifd0 = t + dv.getUint32(t + 4, le);
+      const count = dv.getUint16(ifd0, le);
+      for (let k = 0; k < count; k++) {
+        const e = ifd0 + 2 + k * 12;
+        if (dv.getUint16(e, le) === 0x0112) dv.setUint16(e + 8, 1, le);
+      }
+      dv.setUint32(ifd0 + 2 + count * 12, 0, le);
+    } catch { /* leave malformed EXIF as it is */ }
+    return seg;
+  }
+
+  // insert the EXIF segment after the SOI marker and any JFIF APP0 segment
+  function insertExif(b, seg) {
+    let at = 2;
+    if (b[2] === 0xff && b[3] === 0xe0) at = 4 + ((b[4] << 8) | b[5]);
+    const out = new Uint8Array(b.length + seg.length);
+    out.set(b.subarray(0, at), 0);
+    out.set(seg, at);
+    out.set(b.subarray(at), at + seg.length);
+    return out;
+  }
+
+  resizeCanvas();
+})();
+</script>
+</body>
+</html>
